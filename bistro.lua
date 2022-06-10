@@ -3,17 +3,26 @@
 -- by: @cfd90
 -- originally by: @stretta
 
-engine.name = "KarplusRings"
+--engine.name = "KarplusRings"
+engine.name = "PolyPerc"
+
 
 local MusicUtil = require "musicutil"
-local rings = include("awake-rings/lib/karplus_rings")
+local rings = include("we/lib/karplus_rings")
 local hs = include("lib/halfsecond")
 local midi_lib = include("lib/midi_lib")
 
 local g
 local clk
 
-local pages = {"PLAY", "PATTERNS", "LENGTHS"}
+local white_piano_row
+local white_piano_start
+local black_piano_row
+local black_piano_start
+local octave_row
+
+local pages = {"PLAY", "PATTERNS", "LENGTHS", "NOTES"}
+local note_name = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"}
 local page = 1
 
 local tracks = {}
@@ -24,9 +33,22 @@ function init()
   
   params:add_separator()
   params:add_option("clock_rate", "clock rate", {1, 2, 4, 8, 16}, 4)
-  params:add_group("note data", 1 + g.cols)
-  params:add_number("base_note", "base note", 1, 127, 48)
-
+  params:add_group("note data", 2 + g.cols)
+  --OLD
+  --params:add_number("base_note", "base note", 1, 127, 48)
+  params:add_option("base_note_name", "base note name", note_name, 1)
+  params:add_number("base_octave", "base note octave", -1, 8, 4)
+  
+  white_piano_row = (g.rows/2) + 1
+  black_piano_row = (g.rows/2)
+  white_piano_start = (g.cols/2) - 3
+  black_piano_start = (g.cols/2) - 2
+  octave_row = (g.rows/2)+1
+  if g.cols <= 8 then
+    octave_row = octave_row-1
+  end
+    
+  local base_note = 48
   local start_notes = {0, 2, 4, 5, 7, 9, 11, 12, 14, 16, 17, 19, 21, 23, 24, 26}
 
   for i=1,g.cols do
@@ -141,8 +163,31 @@ function tick()
   end
 end
 
+function get_base_octave()
+  return params:get("base_octave")
+end
+function set_base_octave(o)
+  return params:set("base_octave", o)
+end
+function get_base_note()
+  return params:get("base_note_name") + ((params:get("base_octave") + 1) * 12 )
+end
+function set_base_note(i)
+  return params:set("base_note_name", i)
+end
+function get_base_note_name()
+  return note_name[params:get("base_note_name")]..tostring(params:get("base_octave"))
+end
+function get_note_col(i)
+  return params:get("note_" .. i)
+end
+function set_note_col(i, v)
+  params:set("note_" .. i, v)
+end
 function get_note(i)
-  return params:get("note_" .. i) + params:get("base_note")
+  --OLD
+  --return params:get("note_" .. i) + params:get("base_note")
+  return params:get("note_" .. i) + get_base_note()
 end
 
 function get_pattern_length(i)
@@ -190,6 +235,66 @@ function grid_key(x, y, z)
     -- LENGTH
     if z == 1 then
       set_pattern_length(y, x)
+    end
+  elseif page == 4 then
+    -- NOTE 
+    if z == 1 and y == 1 then
+      note = get_note_col(x)
+      set_note_col(x, note+5)
+    elseif z == 1 and y == 2 then
+      note = get_note_col(x)
+      set_note_col(x, note+1)
+    elseif z == 1 and y == g.rows then
+      note = get_note_col(x)
+      set_note_col(x, note-5)
+    elseif z == 1 and y == g.rows-1 then
+      note = get_note_col(x)
+      set_note_col(x, note-1)
+    elseif z == 1 and y == white_piano_row then
+      if x == white_piano_start then
+        set_base_note(1)
+      elseif x == (white_piano_start + 1) then
+        set_base_note(3)
+      elseif x == (white_piano_start + 2) then
+        set_base_note(5)
+      elseif x == (white_piano_start + 3) then
+        set_base_note(6)
+      elseif x == (white_piano_start + 4) then
+        set_base_note(8)
+      elseif x == (white_piano_start + 5) then
+        set_base_note(10)
+      elseif x == (white_piano_start + 6) then
+        set_base_note(12)
+      end
+      if octave_row == white_piano_row then
+        if x == 3 then
+          octave = get_base_octave()
+          set_base_octave(octave - 1)
+        elseif x == g.cols-2 then
+          octave = get_base_octave()
+          set_base_octave(octave + 1)
+        end
+      end
+    elseif z ==1 and y == octave_row then
+      if x == 3 then
+        octave = get_base_octave()
+        set_base_octave(octave - 1)
+      elseif x == g.cols-2 then
+        octave = get_base_octave()
+        set_base_octave(octave + 1)
+      end
+    elseif z == 1 and y == black_piano_row then
+      if x == black_piano_start then
+        set_base_note(2)
+      elseif x == (black_piano_start + 1) then
+        set_base_note(4)
+      elseif x == (black_piano_start + 2) then
+        set_base_note(7)
+      elseif x == (black_piano_start + 3) then
+        set_base_note(9)
+      elseif x == (black_piano_start + 4) then
+        set_base_note(11)
+      end
     end
   end
 end
@@ -242,8 +347,30 @@ function grid_redraw()
         g:led(j, i, 15)
       end
     end
+  elseif page == 4 then
+    -- NOTES
+    -- Choosing inteval for col
+    for i=1,g.cols do
+      g:led(i,1,15)
+      g:led(i,2,8)
+      g:led(i,g.rows-1,8)
+      g:led(i,g.rows,15)
+    end
+    
+    -- piano roll for choosing note
+    for i=0,4 do
+     g:led(black_piano_start+i,black_piano_row, 10)
+    end
+    for i=0,6 do
+     g:led(white_piano_start+i,white_piano_row, 10)
+    end
+    
+    --  octave buttons
+    g:led(3, octave_row, 15)
+    g:led(g.cols-2, octave_row, 15)
+
+    
   end
-  
   g:refresh()
 end
 
@@ -293,6 +420,13 @@ function key(n, z)
         set_pattern_length(i, math.random(1, g.cols))
       end
     end
+  elseif page == 4 then
+    -- NOTE
+    if n == 3 then
+      for i=1,g.cols do
+        set_note_col(i, 0) -- math.random(-24, 48))
+      end
+    end
   end
 end
 
@@ -323,7 +457,8 @@ function redraw()
     end
   elseif page == 2 then
     -- PATTERNS
-    screen.move(10, 36)
+    --screen.move(10, 36)
+    screen.move(10, 46)
     screen.level(15)
     screen.text("KEY3")
     screen.level(5)
@@ -343,7 +478,34 @@ function redraw()
     screen.text("KEY3")
     screen.level(5)
     screen.text(" to randomize")
-  end
+  elseif page == 4 then
+    -- NOTES
+    screen.move(50,10)
+    screen.level(5)
+    screen.text("Base note: ")
+    screen.level(15)
+    screen.text(get_base_note_name())
+    
+    for i=1, g.cols do
+      local note = get_note_col(i)
+      h_spacing = 3 + (i-1)*7.5
+      if (i % 2 == 0) then
+        screen.move(h_spacing, 38)
+      else
+        screen.move(h_spacing, 30)
+      end
+      --screen.level(note)
+      screen.text(note)
+    end
+    
+    --screen.move(15, 58)
+    screen.move(10, 46)
+    screen.level(15)
+    screen.text("KEY3")
+    screen.level(5)
+    screen.text(" to reset to 0")
+  
+end
   
   screen.update()
 end
