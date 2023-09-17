@@ -1,6 +1,8 @@
 # bistro
 
-"press cafe" remake for Monome Norns.
+"press cafe" remake for Monome Norns. 
+
+Added stuff
 
 ## ToDo improvements
 
