@@ -6,9 +6,9 @@
 --engine.name = "KarplusRings"
 engine.name = "PolyPerc"
 
-
 local MusicUtil = require "musicutil"
-local rings = include("we/lib/karplus_rings")
+
+local rings = include("awake-rings/lib/karplus_rings")
 local hs = include("lib/halfsecond")
 local midi_lib = include("lib/midi_lib")
 
@@ -22,10 +22,16 @@ local black_piano_start
 local octave_row
 
 local pages = {"PLAY", "PATTERNS", "LENGTHS", "NOTES"}
-local note_name = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"}
 local page = 1
 
+local notes = {}
 local tracks = {}
+
+
+scale_names = {}
+for i = 1, #MusicUtil.SCALES do
+  table.insert(scale_names, MusicUtil.SCALES[i].name)
+end
 
 function init()
   g = grid.connect()
@@ -33,12 +39,21 @@ function init()
   
   params:add_separator()
   params:add_option("clock_rate", "clock rate", {1, 2, 4, 8, 16}, 4)
-  params:add_group("note data", 2 + g.cols)
-  --OLD
-  --params:add_number("base_note", "base note", 1, 127, 48)
-  params:add_option("base_note_name", "base note name", note_name, 1)
-  params:add_number("base_octave", "base note octave", -1, 8, 4)
+  params:add_group("note data", 4 + g.cols)
   
+    -- setting root notes using params
+  params:add{type = "number", id = "root_note", name = "root note",
+    min = 0, max = 127, default = 60, formatter = function(param) return MusicUtil.note_num_to_name(param:get(), true) end,
+    action = function() build_scale() end} -- by employing build_scale() here, we update the scale
+
+  -- setting scale type using params
+  params:add{type = "option", id = "scale", name = "scale",
+    options = scale_names, default = 5,
+    action = function() build_scale() end} -- by employing build_scale() here, we update the scale
+  
+  params:add_binary("set_scale", "press K3 to set scale")
+  params:set_action("set_scale",function(x) set_scale() end)
+
   white_piano_row = (g.rows/2) + 1
   black_piano_row = (g.rows/2)
   white_piano_start = (g.cols/2) - 3
@@ -48,13 +63,10 @@ function init()
     octave_row = octave_row-1
   end
     
-  local base_note = 48
-  local start_notes = {0, 2, 4, 5, 7, 9, 11, 12, 14, 16, 17, 19, 21, 23, 24, 26}
-
   for i=1,g.cols do
     local note_name = "note_" .. i
 
-    params:add_number(note_name, note_name:gsub("_", " "), -24, 48, start_notes[i])
+    params:add_number(note_name, note_name:gsub("_", " "), 0, 127, 48)
     tracks[i] = { counter = nil, pattern = nil ,  active_note = nil}
   end
   
@@ -79,6 +91,14 @@ function init()
   end
   
   params:add_separator()
+  params:add{
+    type = "option",
+    id = "sound_engine",
+    name = "sound engine",
+    options = {"PolyPerc","KarplusRings"},
+    default = 0
+  }
+  params:add_separator()
   rings.params()
   
   params:add_separator()
@@ -98,6 +118,7 @@ function init()
   
   params:read()
   
+  --engine.load(param:string("sound-engine"))
   clk = clock.run(tick)
   hardware_clk = clock.run(function()
     while true do
@@ -163,21 +184,23 @@ function tick()
   end
 end
 
-function get_base_octave()
-  return params:get("base_octave")
+function build_scale()
+  notes_nums = MusicUtil.generate_scale_of_length(params:get("root_note"), params:get("scale"), g.cols) -- builds scale
+  notes_freq = MusicUtil.note_nums_to_freqs(notes_nums) -- converts note numbers to an array of frequencies
 end
-function set_base_octave(o)
-  return params:set("base_octave", o)
+function set_scale()
+  build_scale()
+  for i, note in ipairs(notes_nums) do
+    set_note_col(i, note)
+  end
 end
-function get_base_note()
-  return params:get("base_note_name") + ((params:get("base_octave") + 1) * 12 )
+
+function set_notes()
+  for note in notes do
+    params:set("note_" .. note, notes[note])
+  end
 end
-function set_base_note(i)
-  return params:set("base_note_name", i)
-end
-function get_base_note_name()
-  return note_name[params:get("base_note_name")]..tostring(params:get("base_octave"))
-end
+
 function get_note_col(i)
   return params:get("note_" .. i)
 end
@@ -185,9 +208,7 @@ function set_note_col(i, v)
   params:set("note_" .. i, v)
 end
 function get_note(i)
-  --OLD
-  --return params:get("note_" .. i) + params:get("base_note")
-  return params:get("note_" .. i) + get_base_note()
+  return params:get("note_" .. i)  
 end
 
 function get_pattern_length(i)
@@ -240,7 +261,7 @@ function grid_key(x, y, z)
     -- NOTE 
     if z == 1 and y == 1 then
       note = get_note_col(x)
-      set_note_col(x, note+5)
+      set_note_col(x, note+2)
     elseif z == 1 and y == 2 then
       note = get_note_col(x)
       set_note_col(x, note+1)
@@ -252,48 +273,38 @@ function grid_key(x, y, z)
       set_note_col(x, note-1)
     elseif z == 1 and y == white_piano_row then
       if x == white_piano_start then
-        set_base_note(1)
+        params:set("root_note", 1)
       elseif x == (white_piano_start + 1) then
-        set_base_note(3)
+        params:set("root_note", 3)
       elseif x == (white_piano_start + 2) then
-        set_base_note(5)
+        params:set("root_note", 5)
       elseif x == (white_piano_start + 3) then
-        set_base_note(6)
+        params:set("root_note", 6)
       elseif x == (white_piano_start + 4) then
-        set_base_note(8)
+        params:set("root_note", 8)
       elseif x == (white_piano_start + 5) then
-        set_base_note(10)
+        params:set("root_note", 10)
       elseif x == (white_piano_start + 6) then
-        set_base_note(12)
+        params:set("root_note", 12)
       end
-      if octave_row == white_piano_row then
+      if (octave_row == white_piano_row) or ( z ==1 and y == octave_row) then
         if x == 3 then
-          octave = get_base_octave()
-          set_base_octave(octave - 1)
+          params:delta("root_note",-12)
         elseif x == g.cols-2 then
-          octave = get_base_octave()
-          set_base_octave(octave + 1)
+          params:delta("root_note",12)
         end
-      end
-    elseif z ==1 and y == octave_row then
-      if x == 3 then
-        octave = get_base_octave()
-        set_base_octave(octave - 1)
-      elseif x == g.cols-2 then
-        octave = get_base_octave()
-        set_base_octave(octave + 1)
       end
     elseif z == 1 and y == black_piano_row then
       if x == black_piano_start then
-        set_base_note(2)
+        params:set("root_note", 2)
       elseif x == (black_piano_start + 1) then
-        set_base_note(4)
+        params:set("root_note", 4)
       elseif x == (black_piano_start + 2) then
-        set_base_note(7)
+        params:set("root_note", 7)
       elseif x == (black_piano_start + 3) then
-        set_base_note(9)
+        params:set("root_note", 9)
       elseif x == (black_piano_start + 4) then
-        set_base_note(11)
+        params:set("root_note", 11)
       end
     end
   end
@@ -390,6 +401,13 @@ function enc(n, d)
     elseif n == 3 then
       params:delta("pw", d)
     end
+  elseif page == 4 then
+    -- NOTES
+    if n == 2 then
+      params:delta("root_note",d)
+    elseif n == 3 then
+      params:delta("scale", d)
+    end
   end
   
   grid_dirty = true
@@ -426,6 +444,8 @@ function key(n, z)
       for i=1,g.cols do
         set_note_col(i, 0) -- math.random(-24, 48))
       end
+    elseif n == 2 then
+      set_scale()
     end
   end
 end
@@ -480,11 +500,17 @@ function redraw()
     screen.text(" to randomize")
   elseif page == 4 then
     -- NOTES
-    screen.move(50,10)
+    screen.move(50,5)
     screen.level(5)
-    screen.text("Base note: ")
+    screen.text("Root note: ")
     screen.level(15)
-    screen.text(get_base_note_name())
+    screen.text(MusicUtil.note_num_to_name(params:get("root_note"),true))
+    screen.move(50,15)
+    screen.level(5)
+    screen.text("Scale: ")
+    screen.level(15)
+    screen.text(params:string("scale"))
+    
     
     for i=1, g.cols do
       local note = get_note_col(i)
@@ -499,11 +525,12 @@ function redraw()
     end
     
     --screen.move(15, 58)
-    screen.move(10, 46)
+    screen.move(10, 55)
     screen.level(15)
-    screen.text("KEY3")
+    screen.text("KEY2")
     screen.level(5)
-    screen.text(" to reset to 0")
+    screen.text(" to set Scale")
+
   
 end
   
